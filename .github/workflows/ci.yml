@@ -20,10 +20,15 @@ jobs:
           node-version: 20
           cache: pnpm
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4   # must come *before* any pnpm usage
-        with:
-          version: 9
+      # Ensure pnpm is available via Corepack
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Activate pnpm 9
+        run: corepack prepare pnpm@9 --activate
+
+      - name: Print pnpm version (debug)
+        run: pnpm --version
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
