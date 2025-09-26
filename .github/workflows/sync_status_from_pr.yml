@@ -1,241 +1,124 @@
 name: Sync Status from PR Lifecycle
 
 on:
+  workflow_dispatch:
   pull_request:
-    types: [opened, reopened, review_requested, closed]
+    types: [opened, reopened, closed, review_requested]
   issues:
     types: [closed, reopened]
 
 jobs:
-  sync-status:
+  sync_status:
+    if: ${{ vars.AUTOMATION_ENABLED == '1' }}
     runs-on: ubuntu-latest
-    if: vars.AUTOMATION_ENABLED == '1'
-    
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
     steps:
-      - name: Sync Status from PR/Issue Events
+      - name: Resolve linked issues
+        id: link
         uses: actions/github-script@v7
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN || secrets.ORG_PROJECT_TOKEN }}
+          github-token: ${{ secrets.ORG_PROJECT_TOKEN }}
           script: |
-            try {
-              let issueNumbers = [];
-              let newStatus = null;
-              let eventType = context.eventName;
-              let action = context.payload.action;
-              
-              console.log(`Processing ${eventType} event with action: ${action}`);
-              
-              // Handle PR events
-              if (eventType === 'pull_request') {
-                const pr = context.payload.pull_request;
-                
-                // Parse "Closes #<n>" patterns in PR body
-                const closesPattern = /closes\s+#(\d+)/gi;
-                const matches = pr.body?.match(closesPattern);
-                
-                if (matches) {
-                  issueNumbers = matches.map(match => {
-                    const number = match.match(/#(\d+)/)[1];
-                    return parseInt(number);
-                  });
-                  console.log(`Found linked issues: ${issueNumbers.join(', ')}`);
-                } else {
-                  console.log('No "Closes #<n>" patterns found in PR body');
-                  return;
-                }
-                
-                // Map PR actions to status
-                switch (action) {
-                  case 'opened':
-                  case 'reopened':
-                    newStatus = 'In progress';
-                    break;
-                  case 'review_requested':
-                    newStatus = 'In review';
-                    break;
-                  case 'closed':
-                    // Check if PR was merged
-                    if (pr.merged) {
-                      newStatus = 'Done';
-                    } else {
-                      // PR was closed without merging, revert to "To do"
-                      newStatus = 'To do';
-                    }
-                    break;
-                }
-              }
-              
-              // Handle issue events
-              else if (eventType === 'issues') {
-                issueNumbers = [context.payload.issue.number];
-                
-                switch (action) {
-                  case 'closed':
-                    newStatus = 'Done';
-                    break;
-                  case 'reopened':
-                    newStatus = 'To do';
-                    break;
-                }
-              }
-              
-              if (!newStatus || issueNumbers.length === 0) {
-                console.log('No status update needed or no linked issues found');
-                return;
-              }
-              
-              console.log(`Updating status to: ${newStatus} for issues: ${issueNumbers.join(', ')}`);
-              
-              // Get the project's global node ID
-              const projectQuery = await github.graphql(`
-                query($org: String!, $number: Int!) {
-                  organization(login: $org) {
-                    projectV2(number: $number) {
-                      id
-                      fields(first: 20) {
-                        nodes {
-                          ... on ProjectV2SingleSelectField {
-                            id
-                            name
-                            options {
-                              id
-                              name
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              `, {
-                org: '${{ vars.ORG_LOGIN }}',
-                number: parseInt('${{ vars.REPO_EXEC_NUMBER }}')
-              });
-              
-              const project = projectQuery.organization.projectV2;
-              const projectId = project.id;
-              
-              // Find the Status field
-              const statusField = project.fields.nodes.find(field => 
-                field.name === 'Status' && field.__typename === 'ProjectV2SingleSelectField'
-              );
-              
-              if (!statusField) {
-                throw new Error('Status field not found in project');
-              }
-              
-              // Find the target status option
-              const statusOption = statusField.options.find(option => 
-                option.name === newStatus
-              );
-              
-              if (!statusOption) {
-                throw new Error(`Status option "${newStatus}" not found in project`);
-              }
-              
-              console.log(`Found Status field ID: ${statusField.id}`);
-              console.log(`Found status option ID: ${statusOption.id} for "${newStatus}"`);
-              
-              // Update status for each linked issue
-              for (const issueNumber of issueNumbers) {
-                try {
-                  // Get the issue's node ID
-                  const issueQuery = await github.graphql(`
-                    query($owner: String!, $repo: String!, $number: Int!) {
-                      repository(owner: $owner, name: $repo) {
-                        issue(number: $number) {
-                          id
-                        }
-                      }
-                    }
-                  `, {
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    number: issueNumber
-                  });
-                  
-                  const issueId = issueQuery.repository.issue?.id;
-                  
-                  if (!issueId) {
-                    console.log(`Issue #${issueNumber} not found, skipping`);
-                    continue;
-                  }
-                  
-                  // Find the project item for this issue
-                  const itemQuery = await github.graphql(`
-                    query($projectId: ID!, $contentId: ID!) {
-                      node(id: $projectId) {
-                        ... on ProjectV2 {
-                          items(first: 100) {
-                            nodes {
-                              id
-                              content {
-                                ... on Issue {
-                                  id
-                                  number
-                                }
-                              }
-                            }
-                          }
-                        }
-                      }
-                    }
-                  `, {
-                    projectId: projectId,
-                    contentId: issueId
-                  });
-                  
-                  const projectItem = itemQuery.node.items.nodes.find(item => 
-                    item.content?.id === issueId
-                  );
-                  
-                  if (!projectItem) {
-                    console.log(`Issue #${issueNumber} not found in project, skipping`);
-                    continue;
-                  }
-                  
-                  // Update the status field
-                  await github.graphql(`
-                    mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
-                      updateProjectV2ItemFieldValue(input: {
-                        projectId: $projectId,
-                        itemId: $itemId,
-                        fieldId: $fieldId,
-                        value: {
-                          singleSelectOptionId: $optionId
-                        }
-                      }) {
-                        projectV2Item {
-                          id
-                        }
-                      }
-                    }
-                  `, {
-                    projectId: projectId,
-                    itemId: projectItem.id,
-                    fieldId: statusField.id,
-                    optionId: statusOption.id
-                  });
-                  
-                  console.log(`Successfully updated issue #${issueNumber} status to "${newStatus}"`);
-                  
-                } catch (error) {
-                  console.error(`Failed to update issue #${issueNumber}:`, error.message);
-                  // Continue with other issues even if one fails
-                }
-              }
-              
-              console.log('Status sync completed successfully');
-              
-            } catch (error) {
-              console.error('Failed to sync status:', error);
-              console.error('Error details:', error.message);
-              
-              // Check if it's a permissions issue
-              if (error.message.includes('Resource not accessible by integration')) {
-                console.error('Token permissions issue. Please check that the token has project write access.');
-              }
-              
-              // Re-throw to fail the workflow
-              throw error;
+            const isPR = !!context.payload.pull_request;
+            if (!isPR && context.payload.issue) {
+              core.setOutput('issues', JSON.stringify([context.payload.issue.number]));
+              return;
             }
+            const body = context.payload.pull_request?.body || '';
+            const matches = [...body.matchAll(/(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)/ig)].map(m=>Number(m[1]));
+            core.setOutput('issues', JSON.stringify([...new Set(matches)]));
+      - name: Stop if none linked
+        if: ${{ steps.link.outputs.issues == '[]' }}
+        run: echo "No linked issues."
+
+      - name: Get Execution project & Status field IDs (user project)
+        id: meta
+        if: ${{ steps.link.outputs.issues != '[]' }}
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.ORG_PROJECT_TOKEN }}
+          script: |
+            const login = process.env.ORG_LOGIN;
+            const number = parseInt(process.env.REPO_EXEC_NUMBER, 10);
+            const q = `query($login:String!, $number:Int!){
+              user(login:$login){
+                projectV2(number:$number){
+                  id
+                  fields(first:50){
+                    nodes{
+                      ... on ProjectV2FieldCommon { id name }
+                      ... on ProjectV2SingleSelectField { id name options { id name } }
+                    }
+                  }
+                }
+              }
+            }`;
+            const r = await github.graphql(q, { login, number });
+            const proj = r.user?.projectV2;
+            if (!proj?.id) core.setFailed('Execution project not found.');
+            const status = proj.fields.nodes.find(f => f.name === 'Status');
+            if (!status) core.setFailed('Status field not found on Execution project.');
+            const map = Object.fromEntries(status.options.map(o => [o.name, o.id]));
+            core.setOutput('projectId', proj.id);
+            core.setOutput('statusFieldId', status.id);
+            core.setOutput('todo',  map['To do']);
+            core.setOutput('prog',  map['In progress']);
+            core.setOutput('rev',   map['In review']);
+            core.setOutput('done',  map['Done']);
+
+      - name: Update Status on Execution project
+        if: ${{ steps.link.outputs.issues != '[]' && steps.meta.outputs.projectId }}
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.ORG_PROJECT_TOKEN }}
+          script: |
+            const projectId = '${{ steps.meta.outputs.projectId }}';
+            const fieldId   = '${{ steps.meta.outputs.statusFieldId }}';
+            const issues    = JSON.parse('${{ steps.link.outputs.issues }}');
+            const event     = context.payload.action;
+            const merged    = context.payload.pull_request?.merged === true;
+
+            let optionId = null;
+            if (event === 'opened' || event === 'reopened') optionId = '${{ steps.meta.outputs.prog }}';
+            if (event === 'review_requested')               optionId = '${{ steps.meta.outputs.rev }}';
+            if (event === 'closed')                         optionId = merged ? '${{ steps.meta.outputs.done }}' : '${{ steps.meta.outputs.todo }}';
+            if (context.payload.issue && (event === 'closed' || event === 'reopened')) {
+              optionId = event === 'closed' ? '${{ steps.meta.outputs.done }}' : '${{ steps.meta.outputs.todo }}';
+            }
+            if (!optionId) { core.info('No status change for this event.'); return; }
+
+            // helper: find the project item for a given issue number
+            const findItem = async (issueNumber) => {
+              const login = process.env.ORG_LOGIN;
+              const number = parseInt(process.env.REPO_EXEC_NUMBER, 10);
+              const q = `query($login:String!, $number:Int!, $needle:String!){
+                user(login:$login){
+                  projectV2(number:$number){
+                    items(first:100, query:$needle){
+                      nodes { id content { ... on Issue { number } } }
+                    }
+                  }
+                }
+              }`;
+              const r = await github.graphql(q, { login, number, needle: String(issueNumber) });
+              const nodes = r.user.projectV2.items.nodes;
+              return nodes.find(n => n.content?.number === issueNumber)?.id;
+            };
+
+            for (const n of issues) {
+              const itemId = await findItem(n);
+              if (!itemId) { core.info(`No Execution project item for issue #${n}`); continue; }
+              const m = `mutation($projectId:ID!, $itemId:ID!, $fieldId:ID!, $opt:String!){
+                updateProjectV2ItemFieldValue(input:{
+                  projectId:$projectId, itemId:$itemId, fieldId:$fieldId,
+                  value:{ singleSelectOptionId:$opt }
+                }){ projectV2Item { id } }
+              }`;
+              await github.graphql(m, { projectId, itemId, fieldId, opt: optionId });
+            }
+    env:
+      ORG_LOGIN: ${{ vars.ORG_LOGIN }}
+      REPO_EXEC_NUMBER: ${{ vars.REPO_EXEC_NUMBER }}
