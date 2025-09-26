@@ -18,14 +18,13 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: pnpm
+          cache: pnpm   # cache dependencies using pnpm lockfile
 
-      # Ensure pnpm is available via Corepack
       - name: Enable Corepack
         run: corepack enable
 
-      - name: Activate pnpm 9
-        run: corepack prepare pnpm@9 --activate
+      - name: Prepare pnpm
+        run: corepack prepare pnpm@9.0.0 --activate
 
       - name: Print pnpm version (debug)
         run: pnpm --version
