@@ -1,90 +1,75 @@
-# Test Instructions for Tasks to Execution Automation
+# Test Instructions for PR Status Sync Workflow
 
 ## Overview
-This PR adds a GitHub Action that automatically adds non-epic issues to the Execution (Projects v2) board when they are opened.
+This PR implements a GitHub Action that automatically syncs the Execution board status based on PR lifecycle events and linked issues.
 
-## Prerequisites
-Before testing, ensure the following are configured:
+## What the Workflow Does
 
-### Repository Variables
-- `AUTOMATION_ENABLED` = `'1'` (enables the automation)
-- `ORG_LOGIN` = Your organization name
-- `REPO_EXEC_NUMBER` = The project number of your Execution board
+### Triggers
+- **Pull Request Events**: `opened`, `reopened`, `review_requested`, `closed`
+- **Issue Events**: `closed`, `reopened`
 
-### Repository Secrets
-- `GITHUB_TOKEN` (default) or `ORG_PROJECT_TOKEN` (fallback)
-- Token must have `project` write permissions
+### Status Mapping
+- **PR opened/reopened** → `In progress`
+- **PR review_requested** → `In review` 
+- **PR merged or issue closed** → `Done`
+- **Issue reopened** → `To do`
 
-## Test Scenarios
+### Key Features
+- Parses `Closes #<n>` patterns in PR body to find linked issues
+- Uses Projects v2 GraphQL API to update project item field values
+- Safety gate: only runs when `vars.AUTOMATION_ENABLED == '1'`
+- Handles multiple linked issues in a single PR
+- Robust error handling with detailed logging
 
-### Test 1: Non-Epic Issue Should Be Added to Execution Board
-1. Create a new issue **without** the `epic` label
-2. Verify the issue appears in your Execution project board
-3. Check the Actions tab to confirm the workflow ran successfully
-4. Expected result: Issue should be automatically added to Execution board
+## Testing Instructions
 
-### Test 2: Epic Issue Should NOT Be Added to Execution Board
-1. Create a new issue **with** the `epic` label
-2. Verify the issue does NOT appear in your Execution project board
-3. Check the Actions tab - the workflow should not run
-4. Expected result: Issue should remain only in the Roadmap board (handled by existing epic workflow)
+### Prerequisites
+1. Ensure `vars.AUTOMATION_ENABLED` is set to `'1'` in repository settings
+2. Ensure `vars.REPO_EXEC_NUMBER` contains the Execution project number
+3. Ensure `vars.ORG_LOGIN` contains the organization name
+4. Ensure the repository has a token with project write permissions
 
-### Test 3: Safety Gate - Automation Disabled
-1. Temporarily set `AUTOMATION_ENABLED` = `'0'`
-2. Create a new non-epic issue
-3. Verify the issue is NOT added to Execution board
-4. Check Actions tab - workflow should not run
-5. Set `AUTOMATION_ENABLED` back to `'1'`
+### Test Scenarios
 
-### Test 4: Token Fallback
-1. Ensure `GITHUB_TOKEN` is not available or lacks permissions
-2. Ensure `ORG_PROJECT_TOKEN` is properly configured
-3. Create a new non-epic issue
-4. Verify the issue is still added to Execution board
-5. Check Actions logs to confirm fallback token was used
+#### Test 1: PR with "Closes #" Pattern
+1. Create a test issue in the repository
+2. Create a PR with body containing `Closes #<issue_number>`
+3. **Expected**: Issue status should change to "In progress" when PR opens
+4. **Expected**: Issue status should change to "In review" when review is requested
+5. **Expected**: Issue status should change to "Done" when PR is merged
 
-## Verification Steps
+#### Test 2: Issue Direct Events
+1. Create a test issue in the Execution project
+2. Close the issue directly
+3. **Expected**: Issue status should change to "Done"
+4. Reopen the issue
+5. **Expected**: Issue status should change to "To do"
 
-### Check Workflow Execution
-1. Go to Actions tab in your repository
-2. Look for "Add Tasks to Execution" workflow runs
-3. Verify successful completion with green checkmark
-4. Review logs for any error messages
+#### Test 3: PR Without "Closes #" Pattern
+1. Create a PR without any "Closes #" patterns in the body
+2. **Expected**: Workflow should run but skip status updates (no linked issues found)
 
-### Check Project Board
-1. Navigate to your Execution project board
-2. Look for newly created issues in the appropriate columns
-3. Verify issue details are correctly displayed
+#### Test 4: Multiple Linked Issues
+1. Create multiple test issues
+2. Create a PR with body containing multiple "Closes #" patterns
+3. **Expected**: All linked issues should have their status updated
 
-### Check Issue Labels
-1. Confirm non-epic issues don't have the `epic` label
-2. Confirm epic issues have the `epic` label
-3. Verify proper routing based on label presence
+### Monitoring
+- Check the Actions tab for workflow execution logs
+- Verify status changes in the Execution project board
+- Look for detailed console logs showing the sync process
 
-## Troubleshooting
+### Troubleshooting
+- If workflow fails, check token permissions
+- Verify all required repository variables are set
+- Check that the Status field exists in the Execution project
+- Ensure status options match exactly: "To do", "In progress", "In review", "Done"
 
-### Common Issues
-1. **Workflow not running**: Check `AUTOMATION_ENABLED` variable
-2. **Permission errors**: Verify token has project write access
-3. **Project not found**: Check `REPO_EXEC_NUMBER` variable
-4. **Organization not found**: Check `ORG_LOGIN` variable
+## Files Changed
+- `.github/workflows/sync_status_from_pr.yml` - New workflow file
 
-### Debug Information
-- Workflow logs will show detailed error messages
-- GraphQL queries and responses are logged
-- Token fallback behavior is logged
-
-## Rollback Plan
-If issues arise:
-1. Set `AUTOMATION_ENABLED` = `'0'` to disable automation
-2. Manually remove any incorrectly added issues from Execution board
-3. Fix configuration issues
-4. Re-enable automation when ready
-
-## Success Criteria
-- ✅ Non-epic issues are automatically added to Execution board
-- ✅ Epic issues are NOT added to Execution board
-- ✅ Safety gate prevents execution when disabled
-- ✅ Token fallback works correctly
-- ✅ Comprehensive error handling and logging
-- ✅ No impact on existing epic workflow functionality
+## Dependencies
+- Uses `actions/github-script@v7` for GraphQL operations
+- Requires Projects v2 API access
+- Uses existing repository variables and secrets
