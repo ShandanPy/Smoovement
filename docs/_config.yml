@@ -1,0 +1,10 @@
+title: Smoovement Dev Journal
+description: Daily build log for the Smoovement LoL Tracker
+theme: minima
+
+# Hide the top navigation completely
+header_pages: []
+
+# Don’t publish the template pages
+exclude:
+  - journal/templates
