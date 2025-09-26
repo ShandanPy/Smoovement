@@ -1,0 +1,34 @@
+name: Add Epics to Roadmap
+
+on:
+  issues:
+    types: [opened, labeled]
+
+jobs:
+  add-to-roadmap:
+    runs-on: ubuntu-latest
+    if: contains(github.event.issue.labels.*.name, 'epic') && vars.AUTOMATION_ENABLED == '1'
+    
+    steps:
+      - name: Add Epic to Roadmap
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.ORG_PROJECT_TOKEN }}
+          script: |
+            const { data } = await github.graphql(`
+              mutation($projectId: ID!, $contentId: ID!) {
+                addProjectV2ItemById(input: {
+                  projectId: $projectId,
+                  contentId: $contentId
+                }) {
+                  item {
+                    id
+                  }
+                }
+              }
+            `, {
+              projectId: `${{ vars.ORG_LOGIN }}/${{ vars.ORG_ROADMAP_NUMBER }}`,
+              contentId: context.payload.issue.node_id
+            });
+            
+            console.log('Successfully added issue to roadmap:', data.addProjectV2ItemById.item.id);
