@@ -1,0 +1,5 @@
+title: Smoovement Dev Journal
+description: Daily build log for the Smoovement LoL Tracker
+theme: minima
+url: "https://shandanpy.github.io"
+baseurl: "/Smoovement"   # must match repo name exactly (case-sensitive)
