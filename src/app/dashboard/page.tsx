@@ -1,4 +1,5 @@
 import { redirect } from 'next/navigation';
+import type { Session } from 'next-auth';
 import { getServerSession } from 'next-auth/next';
 
 import { authOptions } from '@/app/api/auth/[...nextauth]/route';
@@ -11,7 +12,7 @@ import {
 } from '@/components/ui/Card';
 
 export default async function DashboardPage() {
-  const session = await getServerSession(authOptions);
+  const session = (await getServerSession(authOptions)) as Session | null;
 
   if (!session) {
     redirect('/api/auth/signin');
